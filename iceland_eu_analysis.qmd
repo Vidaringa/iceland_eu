@@ -1,0 +1,302 @@
+---
+title: "Passar Ísland efnahagslega inn í Evrópusambandið?"
+subtitle: "Samþættingargreining á þjóðhagslegum tímaröðum"
+author: "Viðar Ingason"
+date: today
+format:
+  pdf:
+    documentclass: article
+    papersize: a4
+    toc: true
+    number-sections: true
+    fig-pos: "H"
+    pdf-engine: xelatex
+    include-in-header:
+      text: |
+        \usepackage{polyglossia}
+        \setmainlanguage{icelandic}
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+#| include: false
+source("R/get_data")
+library(knitr)
+library(kableExtra)
+```
+
+# Inngangur
+
+Ísland hefur um áratuga skeið verið hluti af innri markaði Evrópusambandsins í gegnum EES-samninginn, en stendur þó utan við sambandið sjálft og evrusvæðið. Þessi staða vekur upp grundvallarspurningu: ef Ísland gengi í ESB og tæki upp evruna, væri það að ganga inn í efnahagssvæði þar sem hagsveiflur, verðlagsþróun og viðskiptamynstur eru í takt við þróun íslensks efnahagslífs?
+
+Til að svara þessari spurningu beitum við samþættingargreiningu (*cointegration analysis*) — tölfræðilegri aðferð sem prófar hvort tímaraðir deili langtímajafnvægi þrátt fyrir skammtímasveiflur. Ef tvær hagstærðir eru samþættar þýðir það að þær sveiflist ekki í sundur til lengri tíma litið; frávik frá jafnvægi eru tímabundin og leiðréttast.
+
+Greiningin nær til fjögurra lykilstærða þjóðhagfræðinnar:
+
+- **Vergri landsframleiðslu** (GDP) — mælikvarði á efnahagslega umsvif
+- **Samræmdum vísitölu neysluverðs** (HICP) — verðlagsþróun
+- **Langtímavöxtum** (10 ára ríkisskuldabréf) — fjármálamarkaðir
+- **Viðskiptaopnun** — útflutningur og innflutningur sem hlutfall af GDP
+
+Samanburðarlöndin eru Danmörk, Svíþjóð og Finnland — norræn ESB-ríki með svipaða stofnanauppbyggingu og velferðarkerfi — ásamt evrulöndunum í heild (EA20). Gögnin eru ársfjórðungsleg frá 1999 (upphaf evrunnar) og sótt frá Eurostat.
+
+Greiningin skiptist í þrjú stig. Fyrst prófum við hvort tímaraðirnar séu óstöðugar (*unit root tests*), sem er forsenda samþættingar. Síðan framkvæmum við Engle-Granger próf á pörum Íslands við hvert samanburðarland, og loks Johansen samþættingarpróf sem metur fjölbreytumynstrið heildstætt.
+
+
+# Gögn
+
+Öll gögn eru sótt frá Eurostat með `eurostat` R-pakkanum. @fig-gdp til @fig-openness sýna þróun hverrar hagstærðar fyrir Ísland og samanburðarlöndin.
+
+```{r}
+#| label: fig-gdp
+#| fig-cap: "Verg landsframleiðsla: Ísland samanborið við ESB/Norðurlönd. Keðjutengd rúmmál, vísitala (upphaf = 100)."
+#| fig-width: 10
+#| fig-height: 6
+print(p_gdp)
+```
+
+```{r}
+#| label: fig-hicp
+#| fig-cap: "Verðlag (HICP): Ísland samanborið við ESB/Norðurlönd. Samræmd vísitala, 2015 = 100."
+#| fig-width: 10
+#| fig-height: 6
+print(p_hicp)
+```
+
+```{r}
+#| label: fig-interest
+#| fig-cap: "Langtímavextir: 10 ára ríkisskuldabréfavextir (%). Gögn vantar fyrir Ísland og evrusvæðið í þessu Eurostat-gagnasafni."
+#| fig-width: 10
+#| fig-height: 6
+print(p_interest)
+```
+
+```{r}
+#| label: fig-openness
+#| fig-cap: "Viðskiptaopnun: (Útflutningur + Innflutningur) / GDP × 100."
+#| fig-width: 10
+#| fig-height: 6
+print(p_openness)
+```
+
+Athyglisvert er strax af myndunum að sjá hve ólíka þróun Ísland hefur í nokkrum stærðum. Verðlag á Íslandi hefur hækkað mun hraðar en á meginlandi Evrópu (sjá @fig-hicp), sem endurspeglar sjálfstæða peningastefnu og gengi krónunnar. Landsframleiðsla Íslands sýnir einnig meiri sveiflur, einkum í tengslum við fjármálahrunið 2008 og bata þar á eftir.
+
+Gögn um langtímavexti frá Eurostat ná ekki til Íslands eða evrusvæðisins í heild, þannig að samþættingarprófin fyrir vexti takmarkast við norrænu ESB-ríkin þrjú.
+
+
+# Niðurstöður
+
+## Engle-Granger samþættingarpróf {#sec-eg}
+
+Engle-Granger prófið metur hvort par tímaraða deili langtímajafnvægi. Aðferðin felst í því að meta aðhvarfslíkan milli tveggja I(1)-raða og prófa síðan hvort leifaliðirnir séu stöðugir (ADF-próf á leifum). Ef leifaliðirnir eru stöðugir eru raðirnar samþættar — þ.e. þær hafa tilhneigingu til að hreyfast saman til lengri tíma.
+
+@tbl-eg sýnir niðurstöðurnar. Markgildi Engle-Granger (5%) er um −3,34, sem er strangara en hefðbundin ADF-gildi þar sem prófað er á leifalið úr metnu líkani.
+
+```{r}
+#| label: tbl-eg
+#| tbl-cap: "Engle-Granger samþættingarpróf: Ísland á móti hverju samanburðarlandi."
+eg_results |>
+  mutate(
+    beta = round(beta, 3),
+    r_squared = round(r_squared, 3),
+    adf_resid = round(adf_resid, 2),
+    eg_crit_5pct = round(eg_crit_5pct, 2)
+  ) |>
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    col.names = c("Par", "Beta", "R²", "ADF leifa", "Markgildi 5%", "Samþætt"),
+    align = "lrrrrr"
+  ) |>
+  kable_styling(latex_options = c("hold_position", "scale_down"))
+```
+
+```{r}
+#| label: fig-eg
+#| fig-cap: "Yfirlit Engle-Granger samþættingar: ADF-prófstærð á leifaliðum (rauð lína = 5% markgildi). Neikvæðari gildi benda til sterkari vísbendinga um samþættingu."
+#| fig-width: 10
+#| fig-height: 7
+print(p_eg)
+```
+
+```{r}
+#| label: eg-interpretation
+#| results: asis
+
+n_coint <- sum(eg_results$cointegrated)
+n_total <- nrow(eg_results)
+
+if (n_coint == 0) {
+  cat("Niðurstöðurnar sýna að **ekkert par** af þeim", n_total, "sem prófuð voru sýnir marktæka samþættingu við 5% markgildi. Þetta bendir til þess að íslenskar hagstærðir hafi ekki deilt langtímajafnvægi við samsvarandi evrópsk gildi á tímabilinu.")
+} else if (n_coint < n_total / 2) {
+  coint_pairs <- eg_results |> filter(cointegrated) |> pull(pair)
+  cat("Af", n_total, "pörum sem prófuð voru sýna", n_coint, "marktæka samþættingu:", paste(coint_pairs, collapse = ", "), ". Þetta bendir til takmarkaðrar samþættingar — langtímajafnvægi er til staðar í einstökum stærðum en ekki yfir alla víðu.")
+} else {
+  cat("Meirihluti paranna (", n_coint, "af", n_total, ") sýnir marktæka samþættingu, sem bendir til þess að íslenskt efnahagslíf sé að verulegu leyti í takt við evrópska þróun til lengri tíma.")
+}
+```
+
+
+## Johansen samþættingarpróf {#sec-johansen}
+
+Johansen prófið útvíkkar samþættingargreininguna yfir í fjölbreytutilfellið og metur fjölda samþættingarvigra (e. *cointegrating rank*) í kerfi tímaraða. Þetta gefur heildstæðari mynd en Engle-Granger, sem takmarkast við pör.
+
+Vegna tölfræðilegra ástæðna er ekki hægt að setja öll fimm löndin í eitt Johansen-próf: evrusvæðið (EA20) inniheldur Finnland og er sterklega fylgni við Danmörku og Svíþjóð, sem veldur næstum einvöldu (e. *singular*) fylkinu. Þess vegna skiptum við í tvo hópa:
+
+1. **Ísland + Evrusvæðið** — tvíbreytusamþætting sem svarar beint aðalspurningunni
+2. **Norræni hópurinn** — Ísland + Danmörk + Svíþjóð + Finnland
+
+@tbl-johansen sýnir niðurstöður trace-prófsins.
+
+```{r}
+#| label: tbl-johansen
+#| tbl-cap: "Johansen samþættingarpróf (trace): tveir hópar á hverja hagstærð."
+johansen_results |>
+  mutate(
+    across(where(is.numeric), ~round(.x, 2))
+  ) |>
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    col.names = c("Próf", "r=0 prófstærð", "r=0 markgildi 5%",
+                   "r=1 prófstærð", "r=1 markgildi 5%", "Rank"),
+    align = "lrrrrr"
+  ) |>
+  kable_styling(latex_options = c("hold_position", "scale_down"))
+```
+
+```{r}
+#| label: johansen-interpretation
+#| results: asis
+
+jo_valid <- johansen_results |> filter(!is.na(rank))
+n_coint_jo <- sum(jo_valid$rank > 0)
+n_total_jo <- nrow(jo_valid)
+
+if (n_coint_jo == 0) {
+  cat("Johansen prófin finna **engan samþættingarvigur** í neinu tilfellanna. Þetta styður niðurstöður Engle-Granger prófsins og bendir til þess að íslenskar og evrópskir hagvísar hafi ekki deilt langtímajafnvægi á tímabilinu 1999–2025.")
+} else {
+  jo_coint <- jo_valid |> filter(rank > 0) |> pull(test)
+  cat("Samþættingarvigur fannst í eftirfarandi tilfellum: ", paste(jo_coint, collapse = "; "), ". ", sep = "")
+  if (n_coint_jo < n_total_jo / 2) {
+    cat("Þetta bendir til veikrar samþættingar í heild — langtímajafnvægi er ekki almennt til staðar milli Íslands og evrópskra viðmiða.")
+  } else {
+    cat("Þetta bendir til þess að veruleg samþætting sé til staðar í mörgum hagstærðum.")
+  }
+}
+```
+
+
+# Umræða
+
+Niðurstöður samþættingargreiningarinnar draga upp mynd af Íslandi sem hagkerfi sem sveiflist á eigin forsendum frekar en í takt við Evrópusambandið. Jafnvel samanborið við hin norrænu löndin — sem eiga margt sameiginlegt með Íslandi hvað varðar stofnanauppbyggingu og velferðarkerfi — er samþætting takmörkuð.
+
+Þetta er kannski ekki sérlega undarlegt þegar litið er til þess sem greinir Ísland frá ESB-ríkjunum:
+
+- **Sjálfstæð peningastefna og gengi**: Ísland rekur eigin seðlabanka og láta gengi krónunnar sveiflast frjálst. Þetta þýðir að verðlagsþróun, vextir og raungengi geta vikið verulega frá evrópskum viðmiðum.
+- **Lítil og einsleit hagkerfið**: Ísland er mjög háð fáum útflutningsgreinum (sjávarútvegi, álframleiðslu, ferðaþjónustu), sem gerir það næmt fyrir áföllum sem hafa takmörkuð áhrif á stærri og fjölbreyttari evrópsk hagkerfi.
+- **Fjármálahrunið 2008**: Ísland upplifði eitt af stærstu bankahrunum sögunnar miðað við stærð hagkerfisins, sem olli djúpum og langvarandi samdrætti sem var allt annars eðlis en samdrátturinn í ESB.
+
+Þessar niðurstöður þýða þó ekki endilega að ESB-aðild væri óhagstæð. Samþættingargreining mælir sögulega samsvörun — hún segir okkur hvort hagkerfin hafi farið saman *hingað til*, en ekki hvort aðild myndi *framkalla* meiri samþættingu. Reynsla smærri evruríkja (t.d. Eistlands, Lettlands) bendir til þess að aðild og sameiginleg gjaldmiðill geti ýtt undir samþættingu með tímanum.
+
+Takmarkanir greiningarinnar ber einnig að nefna: tímabilið nær yfir tvö stór efnahagsáföll (fjármálahrunið og COVID-19) sem geta raskað tölfræðilegum eiginleikum tímaraðanna. Viðbótargreining á formlegri prófi á skiptibreytum (e. *structural breaks*) og útvíkkun yfir í fleiri hagstærðir (t.d. atvinnuleysi, launaþróun) myndi styrkja niðurstöðurnar.
+
+
+\newpage
+
+# Viðauki: Tæknileg atriði {.appendix}
+
+## Einingarrótarprófanir
+
+Forsenda samþættingargreiningar er að tímaraðirnar séu samþættar af stigi eitt, þ.e. I(1): óstöðugar í stigum en stöðugar í fyrstu mismunum. Við notum tvö próf til að staðfesta þetta:
+
+- **ADF-próf** (Augmented Dickey-Fuller): Núlltilgátan er einingarrót (óstöðugleiki). Ef prófstærðin er neikvæðari en markgildi höfnum við núlltilgátunni og álykta um stöðugleika.
+- **KPSS-próf** (Kwiatkowski-Phillips-Schmidt-Shin): Núlltilgátan er stöðugleiki. Ef prófstærðin fer yfir markgildi höfnum við og álykta um óstöðugleika.
+
+Prófin eru gagnvirk: ADF prófar *gegn* stöðugleika, KPSS prófar *fyrir* stöðugleika. Samræmdar niðurstöður styrkja ályktunina.
+
+### ADF-próf á stigum
+
+@tbl-adf sýnir ADF-niðurstöður á stigum (levels). Allar raðir eru I(1) við 5% markgildi — prófstærðirnar eru nær núlli en markgildin, þannig að við getum ekki hafnað núlltilgátunni um einingarrót.
+
+```{r}
+#| label: tbl-adf
+#| tbl-cap: "ADF-próf á stigum. I(1) = TRUE þýðir að ekki er hægt að hafna einingarrót við 5%."
+adf_results |>
+  mutate(across(where(is.numeric), ~round(.x, 2))) |>
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    col.names = c("Röð", "ADF", "1%", "5%", "10%", "Lags", "I(1)"),
+    align = "lrrrrrr"
+  ) |>
+  kable_styling(latex_options = c("hold_position", "scale_down"), font_size = 9)
+```
+
+### ADF-próf á fyrstu mismunum
+
+@tbl-adf-diff sýnir ADF á fyrstu mismunum. Allar raðir eru nú stöðugar (I(1) = FALSE), sem staðfestir I(1)-eiginleikann.
+
+```{r}
+#| label: tbl-adf-diff
+#| tbl-cap: "ADF-próf á fyrstu mismunum. I(1) = FALSE þýðir að raðirnar eru stöðugar eftir fyrstu mismunun."
+adf_diff_results |>
+  mutate(across(where(is.numeric), ~round(.x, 2))) |>
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    col.names = c("Röð", "ADF", "1%", "5%", "10%", "Lags", "I(1)"),
+    align = "lrrrrrr"
+  ) |>
+  kable_styling(latex_options = c("hold_position", "scale_down"), font_size = 9)
+```
+
+### KPSS-próf
+
+@tbl-kpss staðfestir ADF-niðurstöðurnar. Núlltilgáta KPSS er stöðugleiki; höfnun (reject_H0 = TRUE) þýðir óstöðugleika. Allar raðir á stigum eru óstöðugar samkvæmt KPSS.
+
+```{r}
+#| label: tbl-kpss
+#| tbl-cap: "KPSS-próf á stigum. Höfnun (TRUE) þýðir óstöðugleika — samræmist ADF-niðurstöðum."
+kpss_results |>
+  mutate(across(where(is.numeric), ~round(.x, 2))) |>
+  kable(
+    format = "latex",
+    booktabs = TRUE,
+    col.names = c("Röð", "KPSS", "Markgildi 5%", "Hafna H₀"),
+    align = "lrrr"
+  ) |>
+  kable_styling(latex_options = c("hold_position", "scale_down"), font_size = 9)
+```
+
+
+## Aðferðafræði Engle-Granger
+
+Engle-Granger tvískrefaprófið (1987) virkar þannig:
+
+1. Meta OLS-aðhvarf: $y_{IS,t} = \alpha + \beta y_{comp,t} + u_t$
+2. Prófa hvort leifaliðirnir $\hat{u}_t$ séu stöðugir með ADF-prófi (án fasta, þar sem leifaliðirnir hafa núll-meðaltal)
+
+Ef leifaliðirnir eru stöðugir eru raðirnar samþættar. Markgildin eru strangari en hefðbundin ADF-gildi (Engle-Granger markgildi við 5% er um −3,34 fyrir tvær breytur) vegna þess að prófað er á leifalið úr metnu líkani.
+
+
+## Aðferðafræði Johansen
+
+Johansen trace-prófið (1991) metur samþættingarrank kerfa tímaraða í gegnum VAR-líkan. Trace-prófstærðin prófar:
+
+- $H_0: r = 0$ (enginn samþættingarvigur) gegn $H_1: r \geq 1$
+- $H_0: r \leq 1$ gegn $H_1: r \geq 2$, o.s.frv.
+
+Ef prófstærðin fer yfir markgildið er núlltilgátunni hafnað og rank hækkaður.
+
+
+## Johansen hópaskipting
+
+Evrusvæðið (EA20) er vegið meðaltal aðildarríkjanna, þar á meðal Finnlands. Þegar öll fimm löndin (Ísland, Danmörk, Svíþjóð, Finnland, EA20) eru sett í sama VAR-líkan verður fylkið næstum einvelt vegna fjöllínulegrar tengingar. Lausnin er að skipta í tvo hópa:
+
+1. **Ísland + Evrusvæðið**: Svarar beint spurningunni um hvort Ísland deili langtímajafnvægi við ESB sem heild.
+2. **Norræni hópurinn**: Ísland + Danmörk + Svíþjóð + Finnland — metur samþættingu innan norrænu ríkjanna án truflana frá EA20.

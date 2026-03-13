@@ -135,9 +135,9 @@ run_kpss <- function(x, name = "") {
 
   tibble(
     series     = name,
-    kpss_stat  = kpss@teststat[1, 1],
+    kpss_stat  = as.numeric(kpss@teststat),
     crit_5pct  = kpss@cval[1, 2],
-    reject_H0  = kpss@teststat[1, 1] > kpss@cval[1, 2]  # TRUE = non-stationary
+    reject_H0  = as.numeric(kpss@teststat) > kpss@cval[1, 2]  # TRUE = non-stationary
   )
 }
 
@@ -148,36 +148,44 @@ run_engle_granger <- function(y_is, y_comp, label = "") {
   fit <- lm(is ~ comp, data = df)
 
   # Step 2: ADF on residuals (no intercept — residuals have zero mean)
-  resid <- residuals(fit)
-  adf_resid <- ur.df(resid, type = "none", selectlags = "AIC")
+  resid_vec <- as.numeric(residuals(fit))
+  adf_obj <- ur.df(resid_vec, type = "none", selectlags = "AIC")
 
   # Use Engle-Granger critical values (more conservative than standard ADF)
   # Approximate 5% critical value for EG with 2 variables: ~ -3.34
+  adf_stat <- adf_obj@teststat[1, 1]
   tibble(
     pair       = label,
     beta       = coef(fit)[2],
     r_squared  = summary(fit)$r.squared,
-    adf_resid  = adf_resid@teststat[1, 1],
+    adf_resid  = adf_stat,
     eg_crit_5pct = -3.34,
-    cointegrated = adf_resid@teststat[1, 1] < -3.34
+    cointegrated = adf_stat < -3.34
   )
 }
 
 # Johansen cointegration test (multivariate)
 run_johansen <- function(data_matrix, label = "", K = 2) {
   data_clean <- na.omit(data_matrix)
-  jo <- ca.jo(data_clean, type = "trace", ecdet = "const", K = K)
-  summ <- summary(jo)
+  tryCatch({
+    jo <- ca.jo(data_clean, type = "trace", ecdet = "const", K = K)
 
-  # Extract test statistics and critical values
-  tibble(
-    test       = label,
-    r0_stat    = jo@teststat[1],
-    r0_crit5   = jo@cval[1, 2],
-    r1_stat    = if (nrow(jo@cval) >= 2) jo@teststat[2] else NA_real_,
-    r1_crit5   = if (nrow(jo@cval) >= 2) jo@cval[2, 2] else NA_real_,
-    rank       = sum(jo@teststat > jo@cval[, 2])  # number of cointegrating vectors at 5%
-  )
+    # Extract test statistics and critical values
+    tibble(
+      test       = label,
+      r0_stat    = jo@teststat[1],
+      r0_crit5   = jo@cval[1, 2],
+      r1_stat    = if (nrow(jo@cval) >= 2) jo@teststat[2] else NA_real_,
+      r1_crit5   = if (nrow(jo@cval) >= 2) jo@cval[2, 2] else NA_real_,
+      rank       = sum(jo@teststat > jo@cval[, 2])  # number of cointegrating vectors at 5%
+    )
+  }, error = function(e) {
+    cat("  Johansen test failed for", label, ":", conditionMessage(e), "\n")
+    tibble(
+      test = label, r0_stat = NA_real_, r0_crit5 = NA_real_,
+      r1_stat = NA_real_, r1_crit5 = NA_real_, rank = NA_integer_
+    )
+  })
 }
 
 # -----------------------------------------------------------------------------
@@ -200,12 +208,26 @@ hicp_wide     <- prep_wide(hicp_raw, hicp)
 interest_wide <- prep_wide(interest_raw, interest)
 openness_wide <- prep_wide(trade_openness, openness)
 
+# Collect all series; skip any that don't include Iceland
+all_series <- list(
+  GDP      = gdp_wide,
+  HICP     = hicp_wide,
+  Interest = interest_wide,
+  Openness = openness_wide
+)
+all_series <- all_series[sapply(all_series, function(df) "Iceland" %in% names(df))]
+
+if (length(all_series) < 4) {
+  cat("Note: skipping series without Iceland data:",
+      setdiff(c("GDP", "HICP", "Interest", "Openness"), names(all_series)), "\n")
+}
+
 # Run ADF on levels for each series/country combo
 adf_results <- bind_rows(
-  map_dfr(names(gdp_wide)[-1], ~run_adf(gdp_wide[[.x]], paste("GDP:", .x))),
-  map_dfr(names(hicp_wide)[-1], ~run_adf(hicp_wide[[.x]], paste("HICP:", .x))),
-  map_dfr(names(interest_wide)[-1], ~run_adf(interest_wide[[.x]], paste("Interest:", .x))),
-  map_dfr(names(openness_wide)[-1], ~run_adf(openness_wide[[.x]], paste("Openness:", .x)))
+  map(names(all_series), function(s) {
+    df <- all_series[[s]]
+    map_dfr(names(df)[-1], ~run_adf(df[[.x]], paste0(s, ": ", .x)))
+  })
 )
 
 cat("ADF Test Results (levels):\n")
@@ -214,20 +236,20 @@ print(adf_results, n = Inf)
 # Run ADF on first differences
 cat("\nADF Test Results (first differences):\n")
 adf_diff_results <- bind_rows(
-  map_dfr(names(gdp_wide)[-1], ~run_adf(diff(na.omit(gdp_wide[[.x]])), paste("dGDP:", .x))),
-  map_dfr(names(hicp_wide)[-1], ~run_adf(diff(na.omit(hicp_wide[[.x]])), paste("dHICP:", .x))),
-  map_dfr(names(interest_wide)[-1], ~run_adf(diff(na.omit(interest_wide[[.x]])), paste("dInterest:", .x))),
-  map_dfr(names(openness_wide)[-1], ~run_adf(diff(na.omit(openness_wide[[.x]])), paste("dOpenness:", .x)))
+  map(names(all_series), function(s) {
+    df <- all_series[[s]]
+    map_dfr(names(df)[-1], ~run_adf(diff(na.omit(df[[.x]])), paste0("d", s, ": ", .x)))
+  })
 )
 print(adf_diff_results, n = Inf)
 
 # KPSS as confirmation
 cat("\nKPSS Test Results (levels):\n")
 kpss_results <- bind_rows(
-  map_dfr(names(gdp_wide)[-1], ~run_kpss(gdp_wide[[.x]], paste("GDP:", .x))),
-  map_dfr(names(hicp_wide)[-1], ~run_kpss(hicp_wide[[.x]], paste("HICP:", .x))),
-  map_dfr(names(interest_wide)[-1], ~run_kpss(interest_wide[[.x]], paste("Interest:", .x))),
-  map_dfr(names(openness_wide)[-1], ~run_kpss(openness_wide[[.x]], paste("Openness:", .x)))
+  map(names(all_series), function(s) {
+    df <- all_series[[s]]
+    map_dfr(names(df)[-1], ~run_kpss(df[[.x]], paste0(s, ": ", .x)))
+  })
 )
 print(kpss_results, n = Inf)
 
@@ -241,56 +263,42 @@ cat("(Iceland vs each comparator, per series)\n\n")
 comparators <- c("Eurozone", "Denmark", "Sweden", "Finland")
 
 eg_results <- bind_rows(
-  # GDP
-  map_dfr(comparators, function(comp) {
-    df <- gdp_wide |> select(time, Iceland, all_of(comp)) |> drop_na()
-    run_engle_granger(df$Iceland, df[[comp]], paste("GDP: IS vs", comp))
-  }),
-  # HICP
-  map_dfr(comparators, function(comp) {
-    df <- hicp_wide |> select(time, Iceland, all_of(comp)) |> drop_na()
-    run_engle_granger(df$Iceland, df[[comp]], paste("HICP: IS vs", comp))
-  }),
-  # Interest rates
-  map_dfr(comparators, function(comp) {
-    df <- interest_wide |> select(time, Iceland, all_of(comp)) |> drop_na()
-    if (nrow(df) > 10) {
-      run_engle_granger(df$Iceland, df[[comp]], paste("Interest: IS vs", comp))
-    }
-  }),
-  # Trade openness
-  map_dfr(comparators, function(comp) {
-    df <- openness_wide |> select(time, Iceland, all_of(comp)) |> drop_na()
-    run_engle_granger(df$Iceland, df[[comp]], paste("Openness: IS vs", comp))
+  map(names(all_series), function(s) {
+    df_wide <- all_series[[s]]
+    available_comps <- intersect(comparators, names(df_wide))
+    map_dfr(available_comps, function(comp) {
+      df <- df_wide |> select(time, Iceland, all_of(comp)) |> drop_na()
+      if (nrow(df) > 10) {
+        run_engle_granger(df$Iceland, df[[comp]], paste0(s, ": IS vs ", comp))
+      }
+    })
   })
 )
 
 print(eg_results, n = Inf)
 
 # -----------------------------------------------------------------------------
-# 7. Johansen cointegration (multivariate: Iceland + all comparators)
+# 7. Johansen cointegration (two groups to avoid EA20/Nordic multicollinearity)
 # -----------------------------------------------------------------------------
 
 cat("\n=== Johansen Cointegration Tests ===\n")
-cat("(Iceland + Eurozone + Nordics together)\n\n")
+cat("(Two groups: Iceland+Eurozone and Iceland+Nordics)\n\n")
+
+johansen_groups <- list(
+  "Iceland + Eurozone" = c("Iceland", "Eurozone"),
+  "Nordic group"       = c("Iceland", "Denmark", "Sweden", "Finland")
+)
 
 johansen_results <- bind_rows(
-  {
-    mat <- gdp_wide |> select(-time) |> drop_na() |> as.matrix()
-    if (nrow(mat) > 20) run_johansen(mat, "GDP: All countries", K = 2)
-  },
-  {
-    mat <- hicp_wide |> select(-time) |> drop_na() |> as.matrix()
-    if (nrow(mat) > 20) run_johansen(mat, "HICP: All countries", K = 2)
-  },
-  {
-    mat <- interest_wide |> select(-time) |> drop_na() |> as.matrix()
-    if (nrow(mat) > 20) run_johansen(mat, "Interest: All countries", K = 2)
-  },
-  {
-    mat <- openness_wide |> select(-time) |> drop_na() |> as.matrix()
-    if (nrow(mat) > 20) run_johansen(mat, "Openness: All countries", K = 2)
-  }
+  map(names(all_series), function(s) {
+    df <- all_series[[s]]
+    map_dfr(names(johansen_groups), function(grp_name) {
+      cols <- intersect(johansen_groups[[grp_name]], names(df))
+      if (length(cols) < 2) return(NULL)
+      mat <- df |> select(all_of(cols)) |> drop_na() |> as.matrix()
+      if (nrow(mat) > 20) run_johansen(mat, paste0(s, ": ", grp_name), K = 2)
+    })
+  })
 )
 
 print(johansen_results, n = Inf)
