@@ -1,0 +1,32 @@
+---
+title: "Passar Ísland efnahagslega inn í Evrópusambandið?"
+---
+
+Ísland hefur um áratuga skeið verið hluti af innri markaði Evrópusambandsins í gegnum EES-samninginn, en stendur þó utan við sambandið sjálft og evrusvæðið. Þessi greining skoðar hvort efnahagslegt mynstur Íslands sé í nógu miklu samræmi við ESB til þess að aðild og upptaka evru gæti gengið vel.
+
+Meginspurningin er einföld: **ef Ísland gengi í ESB og tæki upp evruna, væri það að ganga inn í efnahagssvæði þar sem hagsveiflur, verðlagsþróun og viðskiptamynstur eru í takt við þróun íslensks efnahagslífs?**
+
+## Aðferðir
+
+Greiningin beitir fjórum aðferðum, hver um sig svarar öðrum þætti spurningarinnar:
+
+1. **[Samþættingargreining](cointegration.qmd)** — Prófar hvort lykilhagstærðir (GDP, verðlag, vextir, viðskiptaopnun) deili langtímajafnvægi milli Íslands og ESB/Norðurlanda. Notar Engle-Granger tvíbreytupróf og Johansen fjölbreytupróf, á undan ADF og KPSS einingarrótarprófunum.
+
+2. **[Klasagreining](cluster.qmd)** — Staðsetur Ísland í víðara evrópsku samhengi með þyrpingargreiningu á skipulegum hagvísum. Svarast hvort Ísland flokkist náttúrulega með einhverjum hópi ESB-ríkja eða sé stöðugt útlægur.
+
+3. **[Hagsvæðisgreining (OCA)](oca.qmd)** — Metur Ísland gagnvart klassískum OCA-viðmiðum: samhæfing hagsveiflna, uppbyggingarlíkt, ósamhverfi áfalla, vinnuaflsfrelsi og geta til fjármálaflutnings.
+
+4. **[Tilbúið Ísland (SCM)](scm.qmd)** — Smíðar gagntilgátulegt „tilbúið Ísland" úr vegnum samsetningu ESB-ríkja til að meta hvernig efnahagsþróun Íslands hefði litið út undir ESB-aðild.
+
+## Gögn og samanburðarhópur
+
+Öll gögn eru sótt frá Eurostat með `eurostat` R-pakkanum. Samanburðarlöndin eru:
+
+- **Evrusvæðið (EA20)** — vítt viðmið
+- **Norræn ESB-ríki**: Danmörk, Svíþjóð, Finnland — líklegasta samanburðarhópurinn vegna stofnanalegs og efnahagslegs líkinda
+
+Ársfjórðungsgögn frá 1999 (upphaf evrunnar).
+
+---
+
+*Höfundur: Viðar Ingason*

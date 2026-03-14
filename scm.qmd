@@ -1,0 +1,7 @@
+---
+title: "Tilbúið Ísland (SCM)"
+---
+
+*Væntanlegt — greining í vinnslu.*
+
+Aðferð tilbúins viðmiðs (*Synthetic Control Method*) smíðar gagntilgátulegt „tilbúið Ísland" úr vegnum samsetningu ESB-ríkja. Þetta gefur mat á hvernig efnahagsþróun Íslands hefði litið út undir ESB-aðild.

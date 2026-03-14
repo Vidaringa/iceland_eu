@@ -11,11 +11,14 @@ library(lubridate)
 library(urca)
 library(tseries)
 
+out_dir <- "output/cointegration"
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
 # -----------------------------------------------------------------------------
 # 1. Define countries and parameters
 # -----------------------------------------------------------------------------
 
-countries <- c("IS", "DK", "SE", "FI", "EA20")  # Iceland, Nordics, Eurozone agg
+countries <- c("IS", "DK", "SE", "FI", "EA20")
 country_labels <- c(
   IS = "Iceland", DK = "Denmark", SE = "Sweden",
   FI = "Finland", EA20 = "Eurozone"
@@ -27,29 +30,21 @@ start_date <- "1999-01-01"
 # 2. Pull data from Eurostat
 # -----------------------------------------------------------------------------
 
-# --- 2a. Real GDP per capita (quarterly, chain-linked volumes, index 2010=100)
-# Dataset: namq_10_pc (quarterly national accounts per capita)
-cat("Pulling GDP per capita...\n")
+cat("Pulling GDP...\n")
 gdp_raw <- get_eurostat("namq_10_gdp", filters = list(
   geo     = countries,
-  unit    = "CLV10_MEUR",    # Chain linked volumes, million EUR 2010
-  na_item = "B1GQ",          # GDP at market prices
-  s_adj   = "SCA"            # Seasonally and calendar adjusted
+  unit    = "CLV10_MEUR",
+  na_item = "B1GQ",
+  s_adj   = "SCA"
 )) |>
   filter(time >= start_date) |>
   select(geo, time, gdp = values)
 
-# Population quarterly for per-capita (if needed we can use annual and interpolate)
-# For cointegration, GDP levels work fine — per capita is nice but not essential
-# We'll proceed with GDP levels; if you want per capita we can add population later
-
-# --- 2b. HICP — Harmonised Index of Consumer Prices (2015=100)
-# Dataset: prc_hicp_midx (monthly) -> we'll aggregate to quarterly
 cat("Pulling HICP...\n")
 hicp_raw <- get_eurostat("prc_hicp_midx", filters = list(
-  geo   = countries,
-  unit  = "I15",       # Index 2015 = 100
-  coicop = "CP00"      # All items
+  geo    = countries,
+  unit   = "I15",
+  coicop = "CP00"
 )) |>
   filter(time >= start_date) |>
   mutate(quarter = floor_date(time, "quarter")) |>
@@ -57,8 +52,6 @@ hicp_raw <- get_eurostat("prc_hicp_midx", filters = list(
   summarise(hicp = mean(values, na.rm = TRUE), .groups = "drop") |>
   rename(time = quarter)
 
-# --- 2c. Long-term interest rates (10-year government bond yields)
-# Dataset: irt_lt_mcby_q (quarterly, Maastricht criterion)
 cat("Pulling long-term interest rates...\n")
 interest_raw <- get_eurostat("irt_lt_mcby_q", filters = list(
   geo = countries
@@ -66,13 +59,11 @@ interest_raw <- get_eurostat("irt_lt_mcby_q", filters = list(
   filter(time >= start_date) |>
   select(geo, time, interest = values)
 
-# --- 2d. Trade openness: (Exports + Imports) / GDP
-# Dataset: namq_10_exi (exports/imports of goods and services)
 cat("Pulling trade data...\n")
 trade_raw <- get_eurostat("namq_10_exi", filters = list(
   geo     = countries,
   unit    = "CLV10_MEUR",
-  na_item = c("P6", "P7"),   # P6 = exports, P7 = imports
+  na_item = c("P6", "P7"),
   s_adj   = "SCA"
 )) |>
   filter(time >= start_date) |>
@@ -86,36 +77,12 @@ trade_openness <- trade_raw |>
   select(geo, time, openness)
 
 # -----------------------------------------------------------------------------
-# 3. Inspect data availability
+# 3. Helper functions
 # -----------------------------------------------------------------------------
 
-cat("\n=== Data availability ===\n")
-cat("\nGDP:\n")
-gdp_raw |> group_by(geo) |>
-  summarise(from = min(time), to = max(time), n = n()) |> print()
-
-cat("\nHICP:\n")
-hicp_raw |> group_by(geo) |>
-  summarise(from = min(time), to = max(time), n = n()) |> print()
-
-cat("\nInterest rates:\n")
-interest_raw |> group_by(geo) |>
-  summarise(from = min(time), to = max(time), n = n()) |> print()
-
-cat("\nTrade openness:\n")
-trade_openness |> group_by(geo) |>
-  summarise(from = min(time), to = max(time), n = n()) |> print()
-
-# -----------------------------------------------------------------------------
-# 4. Helper functions
-# -----------------------------------------------------------------------------
-
-# ADF test with nice output
 run_adf <- function(x, name = "", type = "drift") {
   x_clean <- na.omit(x)
   adf <- ur.df(x_clean, type = type, selectlags = "AIC")
-  summ <- summary(adf)
-
   tibble(
     series    = name,
     adf_stat  = adf@teststat[1, 1],
@@ -123,36 +90,26 @@ run_adf <- function(x, name = "", type = "drift") {
     crit_5pct = adf@cval[1, 2],
     crit_10pct = adf@cval[1, 3],
     lags      = adf@lags,
-    I1 = adf@teststat[1, 1] > adf@cval[1, 2]  # TRUE = likely I(1) at 5%
+    I1 = adf@teststat[1, 1] > adf@cval[1, 2]
   )
 }
 
-# KPSS test (null = stationary)
 run_kpss <- function(x, name = "") {
   x_clean <- na.omit(x)
   kpss <- ur.kpss(x_clean, type = "mu", use.lag = NULL)
-  summ <- summary(kpss)
-
   tibble(
     series     = name,
     kpss_stat  = as.numeric(kpss@teststat),
     crit_5pct  = kpss@cval[1, 2],
-    reject_H0  = as.numeric(kpss@teststat) > kpss@cval[1, 2]  # TRUE = non-stationary
+    reject_H0  = as.numeric(kpss@teststat) > kpss@cval[1, 2]
   )
 }
 
-# Engle-Granger cointegration test (bivariate: Iceland vs comparator)
 run_engle_granger <- function(y_is, y_comp, label = "") {
-  # Step 1: OLS regression
   df <- tibble(is = y_is, comp = y_comp) |> drop_na()
   fit <- lm(is ~ comp, data = df)
-
-  # Step 2: ADF on residuals (no intercept — residuals have zero mean)
   resid_vec <- as.numeric(residuals(fit))
   adf_obj <- ur.df(resid_vec, type = "none", selectlags = "AIC")
-
-  # Use Engle-Granger critical values (more conservative than standard ADF)
-  # Approximate 5% critical value for EG with 2 variables: ~ -3.34
   adf_stat <- adf_obj@teststat[1, 1]
   tibble(
     pair       = label,
@@ -164,20 +121,17 @@ run_engle_granger <- function(y_is, y_comp, label = "") {
   )
 }
 
-# Johansen cointegration test (multivariate)
 run_johansen <- function(data_matrix, label = "", K = 2) {
   data_clean <- na.omit(data_matrix)
   tryCatch({
     jo <- ca.jo(data_clean, type = "trace", ecdet = "const", K = K)
-
-    # Extract test statistics and critical values
     tibble(
       test       = label,
       r0_stat    = jo@teststat[1],
       r0_crit5   = jo@cval[1, 2],
       r1_stat    = if (nrow(jo@cval) >= 2) jo@teststat[2] else NA_real_,
       r1_crit5   = if (nrow(jo@cval) >= 2) jo@cval[2, 2] else NA_real_,
-      rank       = sum(jo@teststat > jo@cval[, 2])  # number of cointegrating vectors at 5%
+      rank       = sum(jo@teststat > jo@cval[, 2])
     )
   }, error = function(e) {
     cat("  Johansen test failed for", label, ":", conditionMessage(e), "\n")
@@ -189,12 +143,9 @@ run_johansen <- function(data_matrix, label = "", K = 2) {
 }
 
 # -----------------------------------------------------------------------------
-# 5. Unit root tests
+# 4. Prepare wide-format data
 # -----------------------------------------------------------------------------
 
-cat("\n=== Unit Root Tests ===\n\n")
-
-# Prepare wide-format data for each series
 prep_wide <- function(df, value_col) {
   df |>
     mutate(geo_label = country_labels[geo]) |>
@@ -208,7 +159,7 @@ hicp_wide     <- prep_wide(hicp_raw, hicp)
 interest_wide <- prep_wide(interest_raw, interest)
 openness_wide <- prep_wide(trade_openness, openness)
 
-# Collect all series; skip any that don't include Iceland
+# Skip series without Iceland
 all_series <- list(
   GDP      = gdp_wide,
   HICP     = hicp_wide,
@@ -217,12 +168,15 @@ all_series <- list(
 )
 all_series <- all_series[sapply(all_series, function(df) "Iceland" %in% names(df))]
 
-if (length(all_series) < 4) {
-  cat("Note: skipping series without Iceland data:",
-      setdiff(c("GDP", "HICP", "Interest", "Openness"), names(all_series)), "\n")
-}
+skipped <- setdiff(c("GDP", "HICP", "Interest", "Openness"), names(all_series))
+if (length(skipped) > 0) cat("Skipping (no Iceland data):", skipped, "\n")
 
-# Run ADF on levels for each series/country combo
+# -----------------------------------------------------------------------------
+# 5. Unit root tests
+# -----------------------------------------------------------------------------
+
+cat("Running unit root tests...\n")
+
 adf_results <- bind_rows(
   map(names(all_series), function(s) {
     df <- all_series[[s]]
@@ -230,35 +184,25 @@ adf_results <- bind_rows(
   })
 )
 
-cat("ADF Test Results (levels):\n")
-print(adf_results, n = Inf)
-
-# Run ADF on first differences
-cat("\nADF Test Results (first differences):\n")
 adf_diff_results <- bind_rows(
   map(names(all_series), function(s) {
     df <- all_series[[s]]
     map_dfr(names(df)[-1], ~run_adf(diff(na.omit(df[[.x]])), paste0("d", s, ": ", .x)))
   })
 )
-print(adf_diff_results, n = Inf)
 
-# KPSS as confirmation
-cat("\nKPSS Test Results (levels):\n")
 kpss_results <- bind_rows(
   map(names(all_series), function(s) {
     df <- all_series[[s]]
     map_dfr(names(df)[-1], ~run_kpss(df[[.x]], paste0(s, ": ", .x)))
   })
 )
-print(kpss_results, n = Inf)
 
 # -----------------------------------------------------------------------------
 # 6. Engle-Granger cointegration (bivariate: Iceland vs each comparator)
 # -----------------------------------------------------------------------------
 
-cat("\n=== Engle-Granger Cointegration Tests ===\n")
-cat("(Iceland vs each comparator, per series)\n\n")
+cat("Running Engle-Granger tests...\n")
 
 comparators <- c("Eurozone", "Denmark", "Sweden", "Finland")
 
@@ -275,14 +219,11 @@ eg_results <- bind_rows(
   })
 )
 
-print(eg_results, n = Inf)
-
 # -----------------------------------------------------------------------------
 # 7. Johansen cointegration (two groups to avoid EA20/Nordic multicollinearity)
 # -----------------------------------------------------------------------------
 
-cat("\n=== Johansen Cointegration Tests ===\n")
-cat("(Two groups: Iceland+Eurozone and Iceland+Nordics)\n\n")
+cat("Running Johansen tests...\n")
 
 johansen_groups <- list(
   "Iceland + Eurozone" = c("Iceland", "Eurozone"),
@@ -301,10 +242,20 @@ johansen_results <- bind_rows(
   })
 )
 
-print(johansen_results, n = Inf)
+# -----------------------------------------------------------------------------
+# 8. Save results to CSV
+# -----------------------------------------------------------------------------
+
+cat("Saving results...\n")
+
+write_csv(adf_results,      file.path(out_dir, "adf_results.csv"))
+write_csv(adf_diff_results, file.path(out_dir, "adf_diff_results.csv"))
+write_csv(kpss_results,     file.path(out_dir, "kpss_results.csv"))
+write_csv(eg_results,       file.path(out_dir, "eg_results.csv"))
+write_csv(johansen_results, file.path(out_dir, "johansen_results.csv"))
 
 # -----------------------------------------------------------------------------
-# 8. Plots for X
+# 9. Plots
 # -----------------------------------------------------------------------------
 
 theme_visbending <- theme_minimal(base_size = 13) +
@@ -316,16 +267,15 @@ theme_visbending <- theme_minimal(base_size = 13) +
     panel.grid.minor = element_blank()
   )
 
-# Color palette: Iceland stands out
 palette_is <- c(
-  "Iceland"  = "#003897",   # Icelandic blue
+  "Iceland"  = "#003897",
   "Denmark"  = "#C8102E",
   "Sweden"   = "#006AA7",
   "Finland"  = "#003580",
   "Eurozone" = "#FFD700"
 )
 
-# --- Plot 1: GDP levels
+# GDP — indexed to 100 at start
 p_gdp <- gdp_wide |>
   pivot_longer(-time, names_to = "country", values_to = "gdp") |>
   drop_na() |>
@@ -343,23 +293,25 @@ p_gdp <- gdp_wide |>
   ) +
   theme_visbending
 
-# --- Plot 2: HICP
+# HICP — indexed to 100 at start (not raw 2015=100)
 p_hicp <- hicp_wide |>
   pivot_longer(-time, names_to = "country", values_to = "hicp") |>
   drop_na() |>
-  ggplot(aes(time, hicp, colour = country)) +
+  group_by(country) |>
+  mutate(hicp_idx = hicp / first(hicp) * 100) |>
+  ggplot(aes(time, hicp_idx, colour = country)) +
   geom_line(aes(linewidth = country == "Iceland")) +
   scale_linewidth_manual(values = c("TRUE" = 1.3, "FALSE" = 0.7), guide = "none") +
   scale_colour_manual(values = palette_is) +
   labs(
     title    = "Price Levels (HICP): Iceland vs EU/Nordics",
-    subtitle = "Harmonised index, 2015 = 100",
-    x = NULL, y = "HICP Index", colour = NULL,
+    subtitle = "Harmonised index, indexed to start = 100",
+    x = NULL, y = "Index", colour = NULL,
     caption  = "Source: Eurostat (prc_hicp_midx)"
   ) +
   theme_visbending
 
-# --- Plot 3: Interest rates
+# Interest rates
 p_interest <- interest_wide |>
   pivot_longer(-time, names_to = "country", values_to = "rate") |>
   drop_na() |>
@@ -375,7 +327,7 @@ p_interest <- interest_wide |>
   ) +
   theme_visbending
 
-# --- Plot 4: Trade openness
+# Trade openness
 p_openness <- openness_wide |>
   pivot_longer(-time, names_to = "country", values_to = "openness") |>
   drop_na() |>
@@ -391,15 +343,7 @@ p_openness <- openness_wide |>
   ) +
   theme_visbending
 
-# Save plots
-ggsave("01_gdp_comparison.png", p_gdp, width = 10, height = 6, dpi = 300)
-ggsave("02_hicp_comparison.png", p_hicp, width = 10, height = 6, dpi = 300)
-ggsave("03_interest_comparison.png", p_interest, width = 10, height = 6, dpi = 300)
-ggsave("04_trade_openness.png", p_openness, width = 10, height = 6, dpi = 300)
-
-cat("\n=== All plots saved ===\n")
-
-# --- Plot 5: Cointegration results summary
+# Engle-Granger summary
 p_eg <- eg_results |>
   separate(pair, into = c("series", "comparator"), sep = ": IS vs ") |>
   ggplot(aes(comparator, adf_resid, fill = cointegrated)) +
@@ -417,6 +361,11 @@ p_eg <- eg_results |>
   ) +
   theme_visbending
 
-ggsave("05_cointegration_summary.png", p_eg, width = 10, height = 7, dpi = 300)
+# Save plots
+ggsave(file.path(out_dir, "01_gdp_comparison.png"), p_gdp, width = 10, height = 6, dpi = 300)
+ggsave(file.path(out_dir, "02_hicp_comparison.png"), p_hicp, width = 10, height = 6, dpi = 300)
+ggsave(file.path(out_dir, "03_interest_comparison.png"), p_interest, width = 10, height = 6, dpi = 300)
+ggsave(file.path(out_dir, "04_trade_openness.png"), p_openness, width = 10, height = 6, dpi = 300)
+ggsave(file.path(out_dir, "05_cointegration_summary.png"), p_eg, width = 10, height = 7, dpi = 300)
 
-cat("\nDone! Check your working directory for plots 01-05.\n")
+cat("Done! Results saved to", out_dir, "\n")

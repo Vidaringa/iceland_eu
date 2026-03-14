@@ -1,0 +1,30 @@
+project:
+  type: website
+  output-dir: docs
+
+website:
+  title: "Passar Ísland inn í ESB?"
+  navbar:
+    left:
+      - href: index.qmd
+        text: Inngangur
+      - href: cointegration.qmd
+        text: Samþætting
+      - href: cluster.qmd
+        text: Klasagreining
+      - href: oca.qmd
+        text: OCA
+      - href: scm.qmd
+        text: Tilbúið Ísland
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    toc-depth: 3
+    lang: is
+
+execute:
+  echo: false
+  warning: false
+  message: false
